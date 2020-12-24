@@ -9,21 +9,23 @@ class CPU {
     uint16_t I; // Address register
     uint16_t pc; // Program counter
 
-    // Timers
-    uint8_t delay_timer;
-    uint8_t sound_timer;
-
-
 public:
+
     CPU();
     Memory mem;
     
     void halt();
     void dump();
-    uint8_t key();
+    void setVF();
+    uint8_t getVF();
     
     uint16_t fetch(); // Fetches opcode from the memory
     void execute(uint16_t); // Decodes and executes the opcode
+
+    // Timers
+    uint8_t delay_timer;
+    uint8_t sound_timer;
+
 };
 
 #endif

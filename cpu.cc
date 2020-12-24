@@ -1,18 +1,19 @@
-#include "cpu.h"
 #include <cstdio>
 #include <cstdlib>
-#include <algorithm>
+#include <ncurses.h>
 
-#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
-#define BYTE_TO_BINARY(byte)  \
-  (byte & 0x80 ? '#' : ' '), \
-  (byte & 0x40 ? '#' : ' '), \
-  (byte & 0x20 ? '#' : ' '), \
-  (byte & 0x10 ? '#' : ' '), \
-  (byte & 0x08 ? '#' : ' '), \
-  (byte & 0x04 ? '#' : ' '), \
-  (byte & 0x02 ? '#' : ' '), \
-  (byte & 0x01 ? '#' : ' ') 
+#include "cpu.h"
+
+uint8_t gfx[32][64];
+uint8_t key_pressed;
+
+uint8_t CPU::getVF() {
+    return V[0xF];
+}
+
+void CPU::setVF() {
+    V[0xF] = 1;
+}
 
 CPU::CPU() {
     I = 0; // Reset address register
@@ -22,46 +23,52 @@ CPU::CPU() {
     for (int i=0; i<0x10; ++i) {
         V[i] = 0;
     }
+
+    // Clear the screen
+    for (int i=0; i<32; ++i) {
+        for (int j=0; j<64; ++j) {
+            gfx[i][j] = 0;
+        }
+    }
 }
 
 void CPU::halt() {
     puts("Unknown opcode, exiting.");
+    endwin();
     exit(1337);
 }
 
 void CPU::dump() {
-    puts("****** DUMPING CPU CONTENTS ******");
     printf("Program counter: %x\n", pc);
+    puts("****** DUMPING CPU CONTENTS ******");
     printf("Address register: %x\n", I);
     printf("Data registers: ");
     for (int i=0; i<0x10; ++i) {
         printf("%x ", V[i]);
     }
+    
     puts(""); // Newline
-
     mem.stack_dump();
-    getchar(); // Waiting for user input
+    getchar(); // Wait for user to see CPU dump
 }
 
 uint16_t CPU::fetch() {
     return (uint16_t) mem.load(pc+1) | ((uint16_t) mem.load(pc) << 8);
 }
 
-uint8_t CPU::key() {
-    return 0x6; // TODO: Get actual key press
-    //return getchar();
-}
-
 void CPU::execute(uint16_t opcode) {
     uint16_t upper = (opcode & 0xF000) >> 12;
     uint16_t lower = opcode & 0x0FFF;
-    
+
     switch(upper) {
-        
+
         case 0x0: {
             if (lower == 0xe0) {
-                // FIXME: Clear the display in SDL
-                puts("Clearing the display");
+                for (int i=0; i<32; ++i) {
+                    for (int j=0; j<64; ++j) {
+                        gfx[i][j] = 0;
+                    }
+                }
             } else if (lower == 0xee) {
                 // Return from a subroutine
                 pc = mem.pop();
@@ -71,13 +78,13 @@ void CPU::execute(uint16_t opcode) {
             }
             break;
         }
-        
+
         case 0x1: {
             // 1NNN: jump to NNN
             pc = lower-2;
             break;
         }
-        
+
         case 0x2: {
             // 2NNN: calls subroutine at NNN
             mem.push(pc);
@@ -93,7 +100,7 @@ void CPU::execute(uint16_t opcode) {
             }
             break;
         }
-        
+
         case 0x4: {
             int X = (lower & 0xF00) >> 8;
             int NN = (lower & 0xFF);
@@ -111,7 +118,7 @@ void CPU::execute(uint16_t opcode) {
             }
             break;
         }
-        
+
         case 0x6: {
             int X = (lower & 0xF00) >> 8;
             int NN = lower & 0xFF;
@@ -122,7 +129,7 @@ void CPU::execute(uint16_t opcode) {
         case 0x7: {
             int X = (lower & 0xF00) >> 8;
             int NN = lower & 0xFF;
-            V[X] += NN;
+            V[X] = (V[X] + NN) & 0xFF;
             break;
         }
 
@@ -134,11 +141,43 @@ void CPU::execute(uint16_t opcode) {
                 case 0x1: V[X] = V[X] | V[Y]; break;
                 case 0x2: V[X] = V[X] & V[Y]; break;
                 case 0x3: V[X] = V[X] ^ V[Y]; break;
-                case 0x4: V[X] += V[Y]; break;
-                case 0x5: V[X] -= V[Y]; break;
-                case 0x6: V[X] >>= 1; break;
-                case 0x7: V[X] = V[Y] - V[X]; break;
-                case 0xE: V[X] <<= 1; break;
+                case 0x4: {
+                    uint16_t sum = V[X] + V[Y];
+                    V[X] = sum & 0xFF;
+                    
+                    // Carry flag
+                    if (sum > 0xFF) { V[0xF] = 1; }
+                    else { V[0xF] = 0; }
+                    break;
+                }
+                case 0x5: {
+                    uint16_t sum = V[X] - V[Y];
+                    V[X] = sum & 0xFF;
+
+                    // Borrow flag
+                    if (sum<0) { V[0xF] = 0; }
+                    else { V[0xF] = 1; }
+                    break;
+                }
+                case 0x6: {
+                    V[0xF] = V[X] & 1;
+                    V[X] >>= 1;
+                    break;
+                }
+                case 0x7: {
+                    uint16_t sum = V[Y] - V[X];
+                    V[X] = sum & 0xFF;
+
+                    // Borrow flag
+                    if (sum<0) { V[0xF] = 0; }
+                    else { V[0xF] = 1; }
+                    break;
+                }
+                case 0xE: {
+                    V[0xF] = (V[X] >> 7) & 1;
+                    V[X] <<= 1;
+                    break;
+                }
                 default: halt();
             }
             
@@ -153,7 +192,7 @@ void CPU::execute(uint16_t opcode) {
             }
             break;
         }
-        
+
         case 0xA: {
             I = lower;
             break;
@@ -163,101 +202,124 @@ void CPU::execute(uint16_t opcode) {
             pc = V[0] + lower - 2;
             break;
         }
-        
+
         case 0xC: {
             int X = (lower & 0xF00) >> 8;
             int NN = (lower & 0xFF);
-            V[X] = 23 & NN; // FIXME: Implement actual rand() lol
+            V[X] = (rand() % 0xFF) & NN;
             break;
         }
-        
+
         case 0xD: {
             int X = (lower & 0xF00) >> 8;
             int Y = (lower & 0xF0) >> 4;
             int N = lower & 0xF;
 
-            // FIXME: Dump the sprite in SDL
-            puts("Dumping the sprite:");
-            printf("X:%x, Y:%x, N:%x\n", X, Y, N);
-            for (int j=0; j<N+1; ++j) {
-                int x = mem.load(I+j);
-                printf(BYTE_TO_BINARY_PATTERN"\n", BYTE_TO_BINARY(x));
+            bool collision_flag = false;
+            for (int j=0; j<N; ++j) {
+                uint8_t current_byte = mem.load(I+j);
+                for (int i=0; i<8; ++i) {
+                    
+                    uint8_t current_bit = (current_byte >> (7-i)) & 1;
+                    if (current_bit == 1 && // If we're trying to set...
+                            current_bit == gfx[V[Y]+j][V[X]+i]) {
+                        collision_flag = true;
+                    }
+
+                    gfx[V[Y]+j][V[X]+i] ^= current_bit; // ... but can't
+                }
             }
 
+            // check for collision - pixel gets unset
+            V[0xF] = collision_flag?1:0;
             break;
         }
-        
+
         case 0xE: {
+            printw("\nInside CPU: %d    ", key_pressed);
             int X = (lower & 0xF00) >> 8;
             int lowest = lower & 0xFF;
             if (lowest == 0x9E) {
-                if (key() == V[X]) {
+                if (key_pressed == V[X]) {
                     pc += 2;
                 }
             } else if (lowest == 0xA1) {
-                if (key() != V[X]) {
+                if (key_pressed != V[X]) {
                     pc += 2;
                 }
             } else {
                 halt();
             }
+
             break;
         }
-        
+
         case 0xF: {
 
             int X = (lower & 0xF00) >> 8;
             switch(lower & 0xFF) {
-                
+
                 case 0x07: {
                     V[X] = delay_timer;
                     break;
                 }
-                
+
                 case 0x0A: {
                     for (;;) {
-                        uint8_t temp = key();
+                        // getchar() is blocking
+                        uint8_t temp = getchar();
                         if (temp != 0) {
                             V[X] = temp;
                             break;
                         }
                     }
-
                     break;
                 }
-                
+
                 case 0x15: {
                     delay_timer = V[X];
                     break;
                 }
-                
+
                 case 0x18: {
                     sound_timer = V[X];
                     break;
                 }
-                
+
                 case 0x1E: {
                     I += V[X];
                     break;
                 }
-                
-                //case 0x29: break;
-                //case 0x33: break;
-                
+
+                case 0x29: {
+                    // Get the digit sprite for the number in V[X]
+                    I = V[X]*5; // Every digit sprite takes 5 bytes
+                    break;
+                }
+
+                case 0x33: {
+                    // FIXME: Test if this actually works
+                    // Store three-digit BCD in I, I+1, I+2
+                    mem.store(I, (V[X]/100)%10);
+                    mem.store(I+1, (V[X]/10)%10);
+                    mem.store(I+2, V[X]%10);
+                    break;
+                }
+
                 case 0x55: {
                     for (int i=0; i<0x10; ++i) {
                         mem.store(I+i, V[i]);
                     }
                     break;
                 }
-                
+
                 case 0x65: {
                     for (int i=0; i<0x10; ++i) {
                         V[i] = mem.load(I+i);
                     }
                     break;
                 }
-                
+
                 default: {
                     halt();
                 }
@@ -272,9 +334,5 @@ void CPU::execute(uint16_t opcode) {
 
     // Incrementing program counter
     pc += 2;
-
-    // Updating timers: assuming CPU runs at same speed as timers (60hz)
-    delay_timer = std::max(delay_timer-1, 0);
-    sound_timer = std::max(sound_timer-1, 0);
 }
 

@@ -12,13 +12,8 @@ Memory::Memory() {
         stack[i] = 0;
     }
 
+    // Stack pointer
     sp = 0;
-
-    // Load fontset
-    for(int i = 0; i < 80; ++i) {
-        ram[i] = 0; // TODO: chip8_fontset[i];
-    }
-
 }
 
 void Memory::store(uint16_t addr, uint8_t byte) {
